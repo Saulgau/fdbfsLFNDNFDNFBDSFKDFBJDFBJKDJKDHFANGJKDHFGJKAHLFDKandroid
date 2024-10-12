@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#141414">
+    <title>FilmFrei</title>
+    <style>
+        body {
+            font-family: Roboto, Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #141414;
+            color: #fff;
+            overscroll-behavior: contain;
+        }
+        .container {
+            padding: 20px;
+            padding-top: 80px; /* Space for fixed header */
+        }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 20px;
+            background-color: rgba(20,20,20,0.8);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+        }
+        h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        #searchBar {
+            flex-grow: 1;
+            margin: 0 20px;
+            padding: 8px;
+            border: none;
+            border-radius: 4px;
+            background-color: rgba(255,255,255,0.2);
+            color: #fff;
+        }
+        #settingsBtn {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 18px;
+        }
+        .film-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 20px;
+        }
+        .film-card {
+            position: relative;
+            overflow: hidden;
+            border-radius: 4px;
+            transition: transform 0.3s ease;
+        }
+        .film-card:hover {
+            transform: scale(1.05);
+        }
+        .film-card img {
+            width: 100%;
+            height: auto;
+        }
+        .film-info {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+        }
+        .film-title {
+            margin: 0;
+            font-size: 14px;
+        }
+        #player {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #000;
+            z-index: 2000;
+            display: none;
+        }
+        #videoPlayer {
+            width: 100%;
+            height: 100%;
+        }
+        #closePlayer {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 24px;
+            z-index: 2001;
+        }
+        #settingsModal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            z-index: 3000;
+            padding: 20px;
+        }
+        #catalogInput {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+        #saveCatalog {
+            background: #e50914;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            cursor: pointer;
+        }
+        #resumePrompt {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            z-index: 2002;
+            display: none;
+        }
+        #resumePrompt button {
+            margin: 10px;
+            padding: 10px 20px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>FilmFrei</h1>
+        <input type="text" id="searchBar" placeholder="Film suchen..." oninput="searchFilms()">
+        <button id="settingsBtn">⚙️</button>
+    </header>
+    <div class="container">
+        <div class="film-grid" id="filmGrid"></div>
+    </div>
+    <div id="player">
+        <button id="closePlayer">×</button>
+        <video id="videoPlayer" controls></video>
+    </div>
+    <div id="resumePrompt">
+        <p>Möchtest du dort fortfahren, wo du aufgehört hast?</p>
+        <button onclick="resumePlayback(true)">Ja</button>
+        <button onclick="resumePlayback(false)">Nein</button>
+    </div>
+    <div id="settingsModal">
+        <h2>Einstellungen</h2>
+        <input type="text" id="catalogInput" placeholder="Katalog-URL eingeben">
+        <button id="saveCatalog">Speichern</button>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script>
+        let catalog = null;
+        let currentFilm = null;
+
+        async function loadCatalog(url) {
+            try {
+                const response = await fetch(url);
+                catalog = await response.json();
+                renderFilms(catalog.films);
+            } catch (error) {
+                console.error('Fehler beim Laden des Katalogs:', error);
+                alert('Fehler beim Laden des Katalogs. Bitte überprüfen Sie die URL und versuchen Sie es erneut.');
+            }
+        }
+
+        function renderFilms(films) {
+            const filmGrid = document.getElementById('filmGrid');
+            filmGrid.innerHTML = '';
+            films.forEach(film => {
+                const card = document.createElement('div');
+                card.className = 'film-card';
+                card.innerHTML = `
+                    <img src="${film.poster}" alt="${film.title}">
+                    <div class="film-info">
+                        <h3 class="film-title">${film.title}</h3>
+                    </div>
+                `;
+                card.addEventListener('click', () => playFilm(film));
+                filmGrid.appendChild(card);
+            });
+        }
+
+        function playFilm(film) {
+            currentFilm = film;
+            const player = document.getElementById('player');
+            const video = document.getElementById('videoPlayer');
+            const savedTime = localStorage.getItem(`filmProgress_${film.id}`);
+
+            if (savedTime) {
+                document.getElementById('resumePrompt').style.display = 'block';
+            } else {
+                startPlayback();
+            }
+        }
+
+        function resumePlayback(resume) {
+            document.getElementById('resumePrompt').style.display = 'none';
+            startPlayback(resume);
+        }
+
+        function startPlayback(resume = false) {
+            const player = document.getElementById('player');
+            const video = document.getElementById('videoPlayer');
+            player.style.display = 'block';
+
+            if (Hls.isSupported()) {
+                const hls = new Hls();
+                hls.loadSource(currentFilm.streamUrl);
+                hls.attachMedia(video);
+                hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                    if (resume) {
+                        const savedTime = localStorage.getItem(`filmProgress_${currentFilm.id}`);
+                        video.currentTime = savedTime ? parseFloat(savedTime) : 0;
+                    }
+                    video.play();
+                });
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                video.src = currentFilm.streamUrl;
+                if (resume) {
+                    const savedTime = localStorage.getItem(`filmProgress_${currentFilm.id}`);
+                    video.currentTime = savedTime ? parseFloat(savedTime) : 0;
+                }
+                video.play();
+            }
+
+            video.addEventListener('timeupdate', function() {
+                localStorage.setItem(`filmProgress_${currentFilm.id}`, video.currentTime);
+            });
+        }
+
+        document.getElementById('closePlayer').addEventListener('click', () => {
+            const player = document.getElementById('player');
+            const video = document.getElementById('videoPlayer');
+            player.style.display = 'none';
+            video.pause();
+            video.src = '';
+            currentFilm = null;
+        });
+
+        document.getElementById('settingsBtn').addEventListener('click', () => {
+            document.getElementById('settingsModal').style.display = 'block';
+        });
+
+        document.getElementById('saveCatalog').addEventListener('click', () => {
+            const catalogUrl = document.getElementById('catalogInput').value;
+            if (catalogUrl) {
+                localStorage.setItem('catalogUrl', catalogUrl);
+                loadCatalog(catalogUrl);
+                document.getElementById('settingsModal').style.display = 'none';
+            }
+        });
+
+        function searchFilms() {
+            const searchTerm = document.getElementById('searchBar').value.toLowerCase();
+            const filteredFilms = catalog.films.filter(film => 
+                film.title.toLowerCase().includes(searchTerm)
+            );
+            renderFilms(filteredFilms);
+        }
+
+        // Beim Start der App
+        const savedCatalogUrl = localStorage.getItem('catalogUrl');
+        if (savedCatalogUrl) {
+            loadCatalog(savedCatalogUrl);
+        }
+
+        // Fullscreen für Android
+        function toggleFullScreen() {
+            const doc = window.document;
+            const docEl = doc.documentElement;
+
+            const requestFullScreen = docEl.requestFullscreen || docEl.mozRequestFullScreen || docEl.webkitRequestFullScreen || docEl.msRequestFullscreen;
+            const cancelFullScreen = doc.exitFullscreen || doc.mozCancelFullScreen || doc.webkitExitFullscreen || doc.msExitFullscreen;
+
+            if (!doc.fullscreenElement && !doc.mozFullScreenElement && !doc.webkitFullscreenElement && !doc.msFullscreenElement) {
+                requestFullScreen.call(docEl);
+            }
+        }
+
+        // Event-Listener für Fullscreen
+        document.addEventListener('click', toggleFullScreen);
+
+        // Verhindern des Überschrollens
+        document.body.style.overscrollBehavior = 'contain';
+    </script>
+</body>
+</html>
